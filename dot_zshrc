@@ -1,0 +1,28 @@
+# User executables
+export PATH=$PATH:$HOME/bin
+
+# Prompt Setup
+setopt prompt_subst
+PROMPT='%(?.%F{green}✓.%F{red}[%?]) %B%F{240}%m %1~%f%b %# '
+zstyle ':vcs_info:git:*' formats '%B%F{240}⑆ %b%%b%f'
+RPROMPT=\$vcs_info_msg_0_
+
+# Bash autocomplete compatibility
+autoload bashcompinit && bashcompinit
+autoload -Uz compinit && compinit
+
+# Git Autocomplete
+autoload -Uz vcs_info
+precmd_vcs_info() { vcs_info }
+precmd_functions+=( precmd_vcs_info )
+
+# n Node Version Manager
+export N_PREFIX=$HOME/.local/n
+export PATH=$N_PREFIX/bin:$PATH
+
+# AWS
+export PATH=$HOME/.local/aws/aws-cli:$PATH
+
+# AWS CLI Autocomplete (needs to happen last for some reason)
+complete -C aws_completer aws
+
