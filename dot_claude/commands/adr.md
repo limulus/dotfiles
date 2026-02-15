@@ -1,4 +1,7 @@
-You are going to reate an Architecture Decision Record for the following
+---
+autoInvoke: false
+---
+You are going to create an Architecture Decision Record for the following
 decision:
 
 > $ARGUMENTS
