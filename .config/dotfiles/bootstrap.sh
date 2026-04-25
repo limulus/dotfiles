@@ -45,7 +45,7 @@ checkout_output=$(mktemp)
 trap 'rm -f "$checkout_output"' EXIT
 
 if ! dot checkout 2>"$checkout_output"; then
-    conflicts=$(awk '/^[[:space:]]/ {print $1}' "$checkout_output")
+    conflicts=$(awk '/^[[:space:]]/ { sub(/^[[:space:]]+/, ""); print }' "$checkout_output")
     if [ -z "$conflicts" ]; then
         printf 'error: dot checkout failed:\n' >&2
         cat "$checkout_output" >&2
@@ -68,13 +68,13 @@ fi
 
 dot branch --set-upstream-to=origin/main main >/dev/null 2>&1 || true
 
-case "${SHELL##*/}" in
+current_shell="${SHELL:-}"
+case "${current_shell##*/}" in
     zsh)
         ;;
     *)
-        printf '\nnote: current login shell is %s\n' "$SHELL"
+        printf '\nnote: current login shell is %s\n' "${current_shell:-unknown}"
         printf 'switch to zsh with: chsh -s "$(command -v zsh)"\n'
-        printf '(on macOS, ensure that path is listed in /etc/shells first)\n'
         ;;
 esac
 
