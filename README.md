@@ -44,6 +44,22 @@ dot push
 
 That tracks it as `.gitconfig` in the repo, and a fresh bootstrap on another machine will check it out to `~/.gitconfig`.
 
+## VS Code devcontainers
+
+VS Code can clone these dotfiles into any devcontainer it builds. Open the command palette (`Cmd+Shift+P` / `Ctrl+Shift+P`), run **Preferences: Open User Settings (JSON)**, and merge in:
+
+```jsonc
+{
+  "dotfiles.repository": "limulus/dotfiles",
+  "dotfiles.installCommand": ".config/dotfiles/bootstrap.sh",
+  "terminal.integrated.defaultProfile.linux": "zsh"
+}
+```
+
+VS Code clones the repo into `~/dotfiles` inside the container and runs the install command. `bootstrap.sh` then sets up the bare repo at `~/.dotfiles` and checks tracked files out into `$HOME` — same flow as on a fresh machine. The `defaultProfile` line makes VS Code's terminal launch zsh; the container image needs zsh installed (Microsoft's base images include it via the `common-utils` devcontainer feature).
+
+See [Personalizing with dotfile repositories](https://code.visualstudio.com/docs/devcontainers/containers#_personalizing-with-dotfile-repositories) for the full list of related settings (e.g. `dotfiles.targetPath`).
+
 ## Notes
 
 - `status.showUntrackedFiles=no` is set on the bare repo by the bootstrap script. Without it, `dot status` would list every file in `$HOME` as untracked.
