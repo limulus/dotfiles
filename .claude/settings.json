@@ -8,6 +8,7 @@
     "command": "bash ~/.claude/statusline-command.sh"
   },
   "effortLevel": "medium",
-  "voiceEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "theme": "dark",
+  "skipAutoPermissionPrompt": true,
+  "voiceEnabled": true
 }
