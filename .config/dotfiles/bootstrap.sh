@@ -42,7 +42,8 @@ backup_path() {
 }
 
 checkout_output=$(mktemp)
-trap 'rm -f "$checkout_output"' EXIT
+backups_file=$(mktemp)
+trap 'rm -f "$checkout_output" "$backups_file"' EXIT
 
 if ! dot checkout 2>"$checkout_output"; then
     conflicts=$(awk '/^[[:space:]]/ { sub(/^[[:space:]]+/, ""); print }' "$checkout_output")
@@ -58,7 +59,7 @@ if ! dot checkout 2>"$checkout_output"; then
         backup=$(backup_path "$target")
         mkdir -p "$(dirname "$backup")"
         mv "$target" "$backup"
-        printf 'backed up: %s -> %s\n' "$target" "$backup"
+        printf '%s -> %s\n' "$target" "$backup" >> "$backups_file"
     done
     if ! dot checkout; then
         printf 'error: dot checkout still failed after backing up conflicts\n' >&2
@@ -80,3 +81,10 @@ esac
 
 printf '\ndone. bare repo at %s\n' "$DOTFILES_DIR"
 printf 'open a new shell or run: source ~/.zshrc\n'
+
+if [ -s "$backups_file" ]; then
+    printf '\n\033[1;33mFiles backed up to avoid conflicts:\033[0m\n'
+    while IFS= read -r line; do
+        printf '  \033[33m%s\033[0m\n' "$line"
+    done < "$backups_file"
+fi
