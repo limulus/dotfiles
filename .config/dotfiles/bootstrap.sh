@@ -42,8 +42,8 @@ backup_path() {
 }
 
 checkout_output=$(mktemp)
-backups_file=$(mktemp)
-trap 'rm -f "$checkout_output" "$backups_file"' EXIT
+summary_file=$(mktemp)
+trap 'rm -f "$checkout_output" "$summary_file"' EXIT
 
 if ! dot checkout 2>"$checkout_output"; then
     conflicts=$(awk '/^[[:space:]]/ { sub(/^[[:space:]]+/, ""); print }' "$checkout_output")
@@ -56,10 +56,25 @@ if ! dot checkout 2>"$checkout_output"; then
         [ -z "$file" ] && continue
         target="$HOME/$file"
         [ -e "$target" ] || continue
+        head_content=$(mktemp)
+        if dot show "HEAD:$file" >"$head_content" 2>/dev/null && cmp -s "$target" "$head_content"; then
+            rm -f "$target" "$head_content"
+            continue
+        fi
         backup=$(backup_path "$target")
         mkdir -p "$(dirname "$backup")"
+        {
+            printf '\033[33m%s -> %s\033[0m\n' "$target" "$backup"
+            diff -u "$head_content" "$target" 2>/dev/null | tail -n +3 | awk '
+                /^@@/ { printf "\033[36m%s\033[0m\n", $0; next }
+                /^-/  { printf "\033[31m%s\033[0m\n", $0; next }
+                /^\+/ { printf "\033[32m%s\033[0m\n", $0; next }
+                { print }
+            ' | sed 's/^/    /'
+            printf '\n'
+        } >>"$summary_file"
+        rm -f "$head_content"
         mv "$target" "$backup"
-        printf '%s -> %s\n' "$target" "$backup" >> "$backups_file"
     done
     if ! dot checkout; then
         printf 'error: dot checkout still failed after backing up conflicts\n' >&2
@@ -82,9 +97,7 @@ esac
 printf '\ndone. bare repo at %s\n' "$DOTFILES_DIR"
 printf 'open a new shell or run: source ~/.zshrc\n'
 
-if [ -s "$backups_file" ]; then
-    printf '\n\033[1;33mFiles backed up to avoid conflicts:\033[0m\n'
-    while IFS= read -r line; do
-        printf '  \033[33m%s\033[0m\n' "$line"
-    done < "$backups_file"
+if [ -s "$summary_file" ]; then
+    printf '\n\033[1;33mFiles backed up to avoid conflicts (HEAD vs local diff below):\033[0m\n\n'
+    sed 's/^/  /' "$summary_file"
 fi
