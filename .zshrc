@@ -16,6 +16,9 @@ autoload -Uz vcs_info
 precmd_vcs_info() { vcs_info }
 precmd_functions+=( precmd_vcs_info )
 
+# Dotfiles (bare repo at ~/.dotfiles managed via the `dot` alias)
+alias dot='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
+
 # n Node Version Manager
 export N_PREFIX=$HOME/.local/n
 export PATH=$N_PREFIX/bin:$PATH
