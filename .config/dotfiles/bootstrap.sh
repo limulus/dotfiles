@@ -15,12 +15,22 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 if [ -e "$DOTFILES_DIR" ]; then
-    printf 'error: %s already exists; remove it or set DOTFILES_DIR to a different path\n' "$DOTFILES_DIR" >&2
-    exit 1
+    existing_url=$(git --git-dir="$DOTFILES_DIR" config --get remote.origin.url 2>/dev/null || true)
+    if [ -z "$existing_url" ]; then
+        printf 'error: %s exists but is not a git repo\n' "$DOTFILES_DIR" >&2
+        printf '       remove it or set DOTFILES_DIR to a different path\n' >&2
+        exit 1
+    fi
+    if [ "$existing_url" != "$REPO_URL" ]; then
+        printf 'error: %s is a clone of %s, not %s\n' "$DOTFILES_DIR" "$existing_url" "$REPO_URL" >&2
+        printf '       remove it or set DOTFILES_DIR to a different path\n' >&2
+        exit 1
+    fi
+    printf 'using existing bare repo at %s\n' "$DOTFILES_DIR"
+else
+    printf 'cloning %s -> %s\n' "$REPO_URL" "$DOTFILES_DIR"
+    git clone --bare "$REPO_URL" "$DOTFILES_DIR"
 fi
-
-printf 'cloning %s -> %s\n' "$REPO_URL" "$DOTFILES_DIR"
-git clone --bare "$REPO_URL" "$DOTFILES_DIR"
 
 dot() {
     git --git-dir="$DOTFILES_DIR/" --work-tree="$HOME" "$@"
