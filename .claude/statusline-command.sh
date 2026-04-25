@@ -134,7 +134,11 @@ if [ -n "$five_pct" ]; then
   five_color=$(pct_color "$five_pct")
   five_bar=$(mini_bar "$five_pct" 15 "$five_color")
   if [ -n "$five_resets" ]; then
-    five_label=$(date -r "$five_resets" +"%-I:%M%p" | tr '[:upper:]' '[:lower:]' | sed 's/:00//')
+    if date -r "$five_resets" >/dev/null 2>&1; then
+      five_label=$(date -r "$five_resets" +"%-I:%M%p" | tr '[:upper:]' '[:lower:]' | sed 's/:00//')
+    else
+      five_label=$(date -d "@$five_resets" +"%I:%M%p" | tr '[:upper:]' '[:lower:]' | sed 's/^0//;s/:00//')
+    fi
   else
     five_label="5h"
   fi
@@ -145,8 +149,13 @@ if [ -n "$seven_pct" ]; then
   seven_color=$(pct_color "$seven_pct")
   seven_bar=$(mini_bar "$seven_pct" 15 "$seven_color")
   if [ -n "$seven_resets" ]; then
-    seven_day=$(date -r "$seven_resets" +"%a")
-    seven_time=$(date -r "$seven_resets" +"%-I:%M%p" | tr '[:upper:]' '[:lower:]' | sed 's/:00//')
+    if date -r "$seven_resets" >/dev/null 2>&1; then
+      seven_day=$(date -r "$seven_resets" +"%a")
+      seven_time=$(date -r "$seven_resets" +"%-I:%M%p" | tr '[:upper:]' '[:lower:]' | sed 's/:00//')
+    else
+      seven_day=$(date -d "@$seven_resets" +"%a")
+      seven_time=$(date -d "@$seven_resets" +"%I:%M%p" | tr '[:upper:]' '[:lower:]' | sed 's/^0//;s/:00//')
+    fi
     seven_label="${seven_day} ${seven_time}"
   else
     seven_label="7d"
