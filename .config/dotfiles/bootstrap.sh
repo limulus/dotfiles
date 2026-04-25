@@ -84,6 +84,15 @@ fi
 
 dot branch --set-upstream-to=origin/main main >/dev/null 2>&1 || true
 
+# Repo-only files we don't want materialized into $HOME (README is for the
+# GitHub repo page; not a dotfile). Configured AFTER the initial checkout
+# because sparse-checkout suppresses checkout's conflict detection — so we
+# let the regular checkout handle conflicts first, then drop these paths
+# from the worktree.
+dot config core.sparseCheckout true
+printf '/*\n!/README.md\n' >"$DOTFILES_DIR/info/sparse-checkout"
+dot sparse-checkout reapply 2>/dev/null || dot read-tree -mu HEAD
+
 current_shell="${SHELL:-}"
 case "${current_shell##*/}" in
     zsh)
