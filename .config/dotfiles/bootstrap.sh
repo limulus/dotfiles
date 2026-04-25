@@ -14,6 +14,22 @@ if ! command -v git >/dev/null 2>&1; then
     exit 1
 fi
 
+# If we were invoked from inside a non-bare clone of this repo at depth 1
+# under $HOME (e.g., VS Code's dotfiles install clones to ~/dotfiles and
+# runs us from inside it), adopt that clone as the bare repo instead of
+# fetching a second copy. End state matches a fresh-machine bootstrap:
+# only $DOTFILES_DIR remains.
+adopt_clone=""
+initial_pwd=$(pwd -P)
+if [ -d "$initial_pwd/.git" ] \
+    && [ "$(dirname "$initial_pwd")" = "$HOME" ] \
+    && [ "$initial_pwd" != "$DOTFILES_DIR" ]; then
+    existing_remote=$(git -C "$initial_pwd" config --get remote.origin.url 2>/dev/null || true)
+    if [ "$existing_remote" = "$REPO_URL" ]; then
+        adopt_clone="$initial_pwd"
+    fi
+fi
+
 if [ -e "$DOTFILES_DIR" ]; then
     existing_url=$(git --git-dir="$DOTFILES_DIR" config --get remote.origin.url 2>/dev/null || true)
     if [ -z "$existing_url" ]; then
@@ -27,6 +43,19 @@ if [ -e "$DOTFILES_DIR" ]; then
         exit 1
     fi
     printf 'using existing bare repo at %s\n' "$DOTFILES_DIR"
+    if [ -n "$adopt_clone" ]; then
+        cd "$HOME"
+        rm -rf "$adopt_clone"
+        printf 'removed redundant clone at %s\n' "$adopt_clone"
+    fi
+elif [ -n "$adopt_clone" ]; then
+    printf 'adopting clone at %s -> %s\n' "$adopt_clone" "$DOTFILES_DIR"
+    mv "$adopt_clone/.git" "$DOTFILES_DIR"
+    git --git-dir="$DOTFILES_DIR" config --unset core.worktree 2>/dev/null || true
+    git --git-dir="$DOTFILES_DIR" config core.bare true
+    rm -f "$DOTFILES_DIR/index"
+    cd "$HOME"
+    rm -rf "$adopt_clone"
 else
     printf 'cloning %s -> %s\n' "$REPO_URL" "$DOTFILES_DIR"
     git clone --bare "$REPO_URL" "$DOTFILES_DIR"
