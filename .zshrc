@@ -1,6 +1,11 @@
 # User executables
 export PATH=$PATH:$HOME/bin:$HOME/.local/bin
 
+# Timezone (derived from system if not already set, so devcontainers can inherit it)
+if [[ -z $TZ && -L /etc/localtime ]]; then
+  export TZ=${$(readlink /etc/localtime)#*/zoneinfo/}
+fi
+
 # Prompt Setup
 setopt prompt_subst
 PROMPT='%(?.%F{green}✓.%F{red}[%?]) %B%F{240}%m %1~%f%b %# '
