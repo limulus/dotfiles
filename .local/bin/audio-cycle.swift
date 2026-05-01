@@ -1,4 +1,9 @@
-// Compile with: swiftc ~/.local/bin/audio-cycle.swift -o ~/.local/bin/audio-cycle
+#!/usr/bin/env swift
+
+// Cycle through a hardcoded list of audio output devices.
+// 
+// Compile with:
+//  swiftc ~/.local/bin/audio-cycle.swift -o ~/.local/bin/audio-cycle
 
 import CoreAudio
 import Foundation
