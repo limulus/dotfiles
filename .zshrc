@@ -1,16 +1,10 @@
 # User executables
-export PATH=$PATH:$HOME/bin:$HOME/.local/bin
+export PATH=$HOME/bin:$HOME/.local/bin:$PATH
 
 # Timezone (derived from system if not already set, so devcontainers can inherit it)
 if [[ -z $TZ && -L /etc/localtime ]]; then
   export TZ=${$(readlink /etc/localtime)#*/zoneinfo/}
 fi
-
-# Prompt Setup
-setopt prompt_subst
-PROMPT='%(?.%F{green}✓.%F{red}[%?]) %B%F{240}%m %1~%f%b %# '
-zstyle ':vcs_info:git:*' formats '%B%F{240}⑆ %b%%b%f'
-RPROMPT=\$vcs_info_msg_0_
 
 # Bash autocomplete compatibility
 autoload bashcompinit && bashcompinit
@@ -25,12 +19,24 @@ precmd_functions+=( precmd_vcs_info )
 alias dot='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
 
 # n Node Version Manager
-export N_PREFIX=$HOME/.local/n
-export PATH=$N_PREFIX/bin:$PATH
+export N_PREFIX=$HOME/.local
 
 # AWS
 export PATH=$HOME/.local/aws/aws-cli:$PATH
 
 # AWS CLI Autocomplete (needs to happen last for some reason)
 complete -C aws_completer aws
+
+# Left Prompt Setup
+setopt prompt_subst
+PROMPT='%(?.%F{green}✓.%F{red}[%?]) %B%F{240}%m %1~%f%b %# '
+zstyle ':vcs_info:git:*' formats '%B%F{240}⑆ %b%%b%f'
+
+# Right Side Prompt Setup
+# Skips VS Code due to Copilot terminal issues with right side prompts
+if [[ "$TERM_PROGRAM" != "vscode" ]]; then
+    setopt prompt_subst
+    zstyle ':vcs_info:git:*' formats '%%F{#777777}⑆ %%B%b%%f%%b'
+    RPROMPT='${vcs_info_msg_0_}'
+fi
 
