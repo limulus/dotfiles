@@ -9,6 +9,5 @@
   },
   "effortLevel": "medium",
   "theme": "dark",
-  "skipAutoPermissionPrompt": true,
   "voiceEnabled": true
 }
