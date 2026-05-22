@@ -1,5 +1,5 @@
 # User executables
-export PATH=$HOME/bin:$HOME/.local/bin:$PATH
+export PATH=$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$PATH
 
 # Timezone (derived from system if not already set, so devcontainers can inherit it)
 if [[ -z $TZ && -L /etc/localtime ]]; then
@@ -19,7 +19,7 @@ precmd_functions+=( precmd_vcs_info )
 alias dot='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
 
 # n Node Version Manager
-export N_PREFIX=$HOME/.local
+export N_PREFIX=$HOME/.local/n
 
 # AWS
 export PATH=$HOME/.local/aws/aws-cli:$PATH
