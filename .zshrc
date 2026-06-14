@@ -1,10 +1,19 @@
 # User executables
-export PATH=$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$PATH
+export PATH=$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$HOME/.local/lima/bin:$PATH
 
 # Timezone (derived from system if not already set, so devcontainers can inherit it)
 if [[ -z $TZ && -L /etc/localtime ]]; then
   export TZ=${$(readlink /etc/localtime)#*/zoneinfo/}
 fi
+
+# History (zsh persists nothing unless HISTFILE is set and SAVEHIST > 0;
+# macOS sets these via /etc/zshrc, but Linux/devcontainers do not)
+HISTFILE=$HOME/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt SHARE_HISTORY        # share history across concurrent sessions
+setopt HIST_IGNORE_DUPS     # don't record consecutive duplicate commands
+setopt HIST_IGNORE_SPACE    # commands prefixed with a space stay out of history
 
 # Bash autocomplete compatibility
 autoload bashcompinit && bashcompinit
