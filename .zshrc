@@ -49,3 +49,17 @@ if [[ "$TERM_PROGRAM" != "vscode" ]]; then
     RPROMPT='${vcs_info_msg_0_}'
 fi
 
+# --- OS-specific config ---
+# Pattern for Linux-only settings: gate on $OSTYPE (zsh sets it to
+# "linux-gnu*" on Linux and "darwin*" on macOS).
+if [[ "$OSTYPE" == linux-gnu* ]]; then
+  # Lima (Linux VM) appends this exact block to .profile/.bashrc/.zshrc on
+  # boot UNLESS it already finds the "# Lima BEGIN" marker. Carrying it here
+  # keeps Lima from mutating this dotfiles-tracked file, so `dot pull` stays
+  # conflict-free. /usr/sbin:/sbin make iptables & mount.fuse3 reachable.
+  # Lima BEGIN
+  PATH="$PATH:/usr/sbin:/sbin"
+  export PATH
+  # Lima END
+fi
+
