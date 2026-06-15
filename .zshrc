@@ -63,3 +63,8 @@ if [[ "$OSTYPE" == linux-gnu* ]]; then
   # Lima END
 fi
 
+# Machine-local zsh drop-ins (untracked; e.g. files provisioned into a VM).
+# Keeps environment-specific config out of these portable dotfiles.
+for _zf in "$HOME"/.config/zsh/*.zsh(N); do source "$_zf"; done
+unset _zf
+
