@@ -63,6 +63,20 @@ if [[ "$OSTYPE" == linux-gnu* ]]; then
   # Lima END
 fi
 
+if [[ "$OSTYPE" == darwin* ]]; then
+  # Shell into the cochineal sandbox VM (config in ~/.config/lima/cochineal.yaml).
+  # Inside ~/Developer, land in the matching guest dir: the mount is at
+  # /mnt/Developer, so Lima's default cwd-mirroring would cd to a non-existent
+  # host path and print errors. Elsewhere, fall back to the guest home.
+  cochineal() {
+    if [[ "$PWD" == "$HOME/Developer" || "$PWD" == "$HOME/Developer/"* ]]; then
+      limactl shell --workdir "/mnt/Developer${PWD#$HOME/Developer}" cochineal "$@"
+    else
+      limactl shell cochineal "$@"
+    fi
+  }
+fi
+
 # Machine-local zsh drop-ins (untracked; e.g. files provisioned into a VM).
 # Keeps environment-specific config out of these portable dotfiles.
 for _zf in "$HOME"/.config/zsh/*.zsh(N); do source "$_zf"; done
