@@ -1,0 +1,190 @@
+# Lima VM "cochineal": a sandbox for running coding agents (claude, etc.)
+# with ~/Developer mounted writable.
+#
+#   limactl start ~/.config/lima/cochineal.yaml   # create + boot + provision (instance name = "cochineal")
+#   limactl shell cochineal                       # enter (zsh)
+#   limactl stop cochineal                        # shut down
+#   limactl start cochineal                       # boot again
+#   limactl delete cochineal                      # destroy
+
+vmType: "vz"
+
+# Both arches are listed for portability; Lima downloads ONLY the one
+# matching the host (aarch64 on this Mac, x86_64 on a PC).
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+# Recommended sizing: ~2/3 of the host's CPUs and 16 GiB RAM. The values below
+# fit this 18-CPU / 48 GiB host. cpus/memory can only be set when the instance
+# is first CREATED, so on a different host override them with CLI flags at
+# create time (they take precedence over the values here), e.g.:
+#   limactl start --cpus 8 --memory 16 ~/.config/lima/cochineal.yaml
+cpus: 12
+memory: "16GiB"
+disk: "50GiB"
+
+# Don't install Lima's bundled rootless containerd/nerdctl — we use Docker
+# Engine instead (installed in provisioning), which ships its own containerd.
+containerd:
+  system: false
+  user: false
+
+mountType: "virtiofs"
+mounts:
+  # Host ~/Developer -> guest /mnt/Developer (a stable, machine-independent
+  # path). A provision step symlinks ~/Developer -> /mnt/Developer so the
+  # path matches the host inside the guest too.
+  - location: "~/Developer"
+    mountPoint: "/mnt/Developer"
+    writable: true
+
+provision:
+  # 1. System packages + make zsh the login shell for the Lima user.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y zsh tmux git ripgrep curl ca-certificates build-essential
+      chsh -s "$(command -v zsh)" "{{.User}}"
+
+      # --- Docker Engine + Compose v2 (rootful; the VM is the sandbox) ---
+      # get.docker.com installs docker-ce, the CLI, containerd.io, buildx,
+      # and the compose plugin, then enables the daemon via systemd.
+      if ! command -v docker >/dev/null 2>&1; then
+        curl -fsSL https://get.docker.com | sh
+      fi
+      # NOTE: this group add only applies to NEW login sessions. Lima's SSH
+      # ControlMaster is already authenticated from boot, so `limactl shell`
+      # sessions won't pick up the docker group until the VM is restarted
+      # once after a fresh build:  limactl restart cochineal
+      usermod -aG docker "{{.User}}"
+
+      # --- MOTD: short sandbox cheat-sheet (Ubuntu update-motd.d) ---
+      cat > /etc/sandbox-motd <<'MOTDEOF'
+
+      Agent sandbox — ~/Developer is mounted from the macOS host
+
+        nmlocal     give THIS project a VM-local node_modules, then: npm install
+        nmstatus    list projects with VM-local node_modules
+        docker      Docker Engine + Compose available (rootful)
+
+      MOTDEOF
+      printf '#!/bin/sh\ncat /etc/sandbox-motd 2>/dev/null\n' > /etc/update-motd.d/99-sandbox
+      chmod +x /etc/update-motd.d/99-sandbox
+      # `limactl shell` reuses a multiplexed SSH connection, so pam_motd never
+      # fires. It IS a login shell, so also print the cheat-sheet from zlogin
+      # (interactive TTY only -> shown on entry, silent in subshells/tmux/scripts).
+      # idempotent: provision scripts re-run on every boot, so guard the append
+      grep -qF 'cat /etc/sandbox-motd' /etc/zsh/zlogin 2>/dev/null || \
+        printf '%s\n' '[[ -o interactive && -t 1 ]] && cat /etc/sandbox-motd 2>/dev/null' >> /etc/zsh/zlogin
+
+  # 2. Per-user setup (runs as the Lima user, with $HOME set).
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # --- n (Node version manager) + Node LTS, into ~/.local/n per .zshrc ---
+      export N_PREFIX="$HOME/.local/n"
+      if [ ! -x "$N_PREFIX/bin/n" ]; then
+        mkdir -p "$N_PREFIX/bin"
+        curl -fsSL https://raw.githubusercontent.com/tj/n/master/bin/n -o "$N_PREFIX/bin/n"
+        chmod +x "$N_PREFIX/bin/n"
+      fi
+      PATH="$N_PREFIX/bin:$PATH" N_PREFIX="$N_PREFIX" "$N_PREFIX/bin/n" lts
+      export PATH="$N_PREFIX/bin:$PATH"
+
+      # --- Dotfiles (bare-repo bootstrap; idempotent: it skips if ~/.dotfiles exists) ---
+      if [ ! -e "$HOME/.dotfiles" ]; then
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/limulus/dotfiles/main/.config/dotfiles/bootstrap.sh)"
+      fi
+
+      # --- ~/Developer -> the mounted host directory ---
+      ln -sfn /mnt/Developer "$HOME/Developer"
+
+      # --- claude CLI (native installer -> ~/.local/bin) ---
+      if [ ! -x "$HOME/.local/bin/claude" ]; then
+        curl -fsSL https://claude.ai/install.sh | bash
+      fi
+
+      # --- ~/.zshenv: user tools on PATH for NON-interactive zsh too, so
+      #     `cochineal <cmd>` (e.g. `cochineal claude`) resolves them. The
+      #     dotfiles set PATH in .zshrc (interactive only); .zshenv covers the
+      #     rest. Not tracked by the dotfiles, so safe to write here. ---
+      cat > "$HOME/.zshenv" <<'ZENVEOF'
+      # User-local tools on PATH for ALL zsh invocations (incl. non-interactive),
+      # so `limactl shell cochineal <cmd>` resolves claude/node/npm.
+      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$PATH"
+      ZENVEOF
+
+      # --- node_modules isolation helper (sourced by .zshrc's conf.d loader) ---
+      # node_modules holds platform-specific native binaries, so it must NOT be
+      # shared with the macOS host over the virtiofs mount. `nmlocal` shadows a
+      # project's node_modules with VM-local storage via a bind mount; source
+      # files stay shared. See `nmlocal`/`nmstatus` once inside the VM.
+      mkdir -p "$HOME/.config/zsh"
+      cat > "$HOME/.config/zsh/lima-nodemodules.zsh" <<'NMEOF'
+      # VM-local node_modules (keep platform-specific installs off the shared mount)
+      NMSTORE="$HOME/.local/share/nmstore"
+      NMREG="$NMSTORE/.registry"
+
+      nmlocal() {                       # back $PWD's node_modules with VM-local disk
+        emulate -L zsh
+        local proj="${PWD:A}"
+        if [[ "$proj" != /mnt/Developer/* ]]; then
+          print -ru2 -- "nmlocal: run inside a project under ~/Developer"; return 1
+        fi
+        local store="$NMSTORE${proj#/mnt/Developer}"
+        mkdir -p "$store" "$proj/node_modules"
+        if mountpoint -q "$proj/node_modules"; then
+          print -- "nmlocal: already VM-local ($proj/node_modules)"; return 0
+        fi
+        sudo mount --bind "$store" "$proj/node_modules" || return 1
+        grep -qxF -- "$proj" "$NMREG" 2>/dev/null || print -r -- "$proj" >> "$NMREG"
+        print -- "nmlocal: $proj/node_modules is now VM-local -> $store"
+        print -- "         run 'npm install' to populate it (host copy is untouched)"
+      }
+
+      nmstatus() {                      # list registered projects and bind state
+        [[ -r $NMREG ]] || { print -- "no VM-local node_modules registered"; return 0 }
+        local proj
+        while IFS= read -r proj; do
+          if mountpoint -q "$proj/node_modules" 2>/dev/null; then print -- "bound    $proj"
+          else print -- "unbound  $proj"; fi
+        done < "$NMREG"
+      }
+
+      _nmrebind() {                     # re-apply binds once per boot (stores persist; mounts don't)
+        emulate -L zsh
+        [[ -r $NMREG && ! -e /run/user/$UID/.nmrebind ]] || return 0
+        local proj store
+        while IFS= read -r proj; do
+          store="$NMSTORE${proj#/mnt/Developer}"
+          [[ -d $proj && -d $store ]] || continue
+          mountpoint -q "$proj/node_modules" 2>/dev/null && continue
+          mkdir -p "$proj/node_modules"
+          sudo mount --bind "$store" "$proj/node_modules" 2>/dev/null
+        done < "$NMREG"
+        : > /run/user/$UID/.nmrebind 2>/dev/null
+      }
+      _nmrebind
+      NMEOF
+
+# Don't return from `limactl start` until the agent tooling is actually present.
+probes:
+  - description: "node, claude, and docker to be installed"
+    script: |
+      #!/bin/bash
+      set -eux
+      if ! timeout 300s bash -c "until test -x ~/.local/n/bin/node && test -x ~/.local/bin/claude && command -v docker >/dev/null 2>&1; do sleep 3; done"; then
+        echo "provisioning did not finish in time" >&2
+        exit 1
+      fi
+    hint: |
+      Provisioning is incomplete. Inspect the guest logs with:
+      limactl shell cochineal sudo cat /var/log/cloud-init-output.log
