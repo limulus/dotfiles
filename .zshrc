@@ -26,6 +26,10 @@ precmd_functions+=( precmd_vcs_info )
 
 # Dotfiles (bare repo at ~/.dotfiles managed via the `dot` alias)
 alias dot='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
+# Plain path completion for `dot` (else the alias inherits git's add-completion,
+# which won't complete new/untracked paths). Trade-off: no subcommand completion.
+setopt complete_aliases
+compdef _files dot
 
 # n Node Version Manager
 export N_PREFIX=$HOME/.local/n
