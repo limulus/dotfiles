@@ -81,14 +81,11 @@ provision:
         docker      Docker Engine + Compose available (rootful)
 
       MOTDEOF
-      printf '#!/bin/sh\ncat /etc/sandbox-motd 2>/dev/null\n' > /etc/update-motd.d/99-sandbox
-      chmod +x /etc/update-motd.d/99-sandbox
-      # `limactl shell` reuses a multiplexed SSH connection, so pam_motd never
-      # fires. It IS a login shell, so also print the cheat-sheet from zlogin
-      # (interactive TTY only -> shown on entry, silent in subshells/tmux/scripts).
-      # idempotent: provision scripts re-run on every boot, so guard the append
-      grep -qF 'cat /etc/sandbox-motd' /etc/zsh/zlogin 2>/dev/null || \
-        printf '%s\n' '[[ -o interactive && -t 1 ]] && cat /etc/sandbox-motd 2>/dev/null' >> /etc/zsh/zlogin
+      # Show the cheat-sheet via zlogin (fires on both multiplexed and fresh
+      # `limactl shell` logins, unlike pam_motd/update-motd.d). Idempotent: drop
+      # any prior copy, then add one.
+      sed -i '\#cat /etc/sandbox-motd#d' /etc/zsh/zlogin 2>/dev/null || true
+      printf '%s\n' '[[ -o interactive && -t 1 ]] && cat /etc/sandbox-motd 2>/dev/null' >> /etc/zsh/zlogin
 
   # 2. Per-user setup (runs as the Lima user, with $HOME set).
   - mode: user
