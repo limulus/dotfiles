@@ -40,6 +40,13 @@ mounts:
   - location: "~/Developer"
     mountPoint: "/mnt/Developer"
     writable: true
+  # Host claude/agent skills, shared read-only so the guest's claude inherits
+  # them (live — host edits show up immediately). The real skill dirs live in
+  # ~/.agents/skills; ~/.claude/skills on the host is just symlinks into it, so
+  # we share the store and a provision step points guest ~/.claude/skills here.
+  - location: "~/.agents/skills"
+    mountPoint: "/mnt/agent-skills"
+    writable: false
 
 provision:
   # 1. System packages + make zsh the login shell for the Lima user.
@@ -111,6 +118,13 @@ provision:
       if [ ! -x "$HOME/.local/bin/claude" ]; then
         curl -fsSL https://claude.ai/install.sh | bash
       fi
+
+      # --- Inherit host skills: the dotfiles track ~/.claude/skills -> ../.agents/skills,
+      #     so just make that resolve in the guest by pointing ~/.agents/skills at the
+      #     read-only mount of the host's skill store. (~/.claude/skills itself is owned
+      #     by the dotfiles checkout, not by provisioning.) Idempotent. ---
+      mkdir -p "$HOME/.agents"
+      ln -sfn /mnt/agent-skills "$HOME/.agents/skills"
 
       # --- ~/.zshenv: user tools on PATH for NON-interactive zsh too, so
       #     `cochineal <cmd>` (e.g. `cochineal claude`) resolves them. The
