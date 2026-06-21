@@ -213,6 +213,41 @@ provision:
       _nmrebind
       NMEOF
 
+      # --- Agent memory: tell the guest's claude about this sandbox ---
+      # ~/.claude/CLAUDE.md is dotfiles-tracked and SHARED with the macOS host
+      # (the /difit notes), so VM-specific facts can't live there. Instead write
+      # a guest-only ~/.claude/cochineal.md and import it from CLAUDE.md. The
+      # import line is added in the guest only (host CLAUDE.md is never touched);
+      # both the file and the import are reconstructed on every rebuild.
+      mkdir -p "$HOME/.claude"
+      cat > "$HOME/.claude/cochineal.md" <<'COCHINEALEOF'
+      # Sandbox: the "cochineal" Lima VM
+
+      You're in **cochineal**, a disposable Lima VM on a macOS host. The VM is
+      throwaway, but **your edits under `~/Developer` are not**: it's shared
+      writable with the host at the same path (`/Users/eric/Developer`), so
+      changes land on the real machine live, in both directions.
+
+      - **Keep a project's `node_modules` off the shared mount** — it holds native
+        binaries built for the Linux VM that clash with the host's macOS install
+        (and vice versa). Isolate one with **`nmlocal`**: it bind-mounts VM-local
+        disk over the project's `node_modules`, so installs stay VM-local while
+        source stays shared (the host's copy is untouched). Run it before
+        `npm install` in any project that isn't already isolated; **`nmstatus`**
+        shows which are. Registered projects are re-bound automatically each boot,
+        so ones you actively work in are usually set up already.
+      - **Guest-local changes (outside `~/Developer`) don't survive a rebuild**,
+        and the VM's setup lives in `~/.config/lima/cochineal.yaml` on the host,
+        which isn't mounted here. To persist a sandbox change, raise it with the
+        user.
+      COCHINEALEOF
+
+      # Wire the import into the guest's CLAUDE.md (idempotent; guest-only).
+      if [ -f "$HOME/.claude/CLAUDE.md" ]; then
+        grep -qxF '@cochineal.md' "$HOME/.claude/CLAUDE.md" \
+          || printf '\n@cochineal.md\n' >> "$HOME/.claude/CLAUDE.md"
+      fi
+
 # Don't return from `limactl start` until the agent tooling is actually present.
 probes:
   - description: "node, claude, and docker to be installed"
