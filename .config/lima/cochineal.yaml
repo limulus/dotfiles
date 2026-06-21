@@ -34,11 +34,13 @@ containerd:
 
 mountType: "virtiofs"
 mounts:
-  # Host ~/Developer -> guest /mnt/Developer (a stable, machine-independent
-  # path). A provision step symlinks ~/Developer -> /mnt/Developer so the
-  # path matches the host inside the guest too.
+  # Host ~/Developer -> guest /Users/eric/Developer, the SAME absolute path as
+  # on the host. Mounting at the host path (rather than a neutral /mnt location)
+  # means git worktree references — which store absolute paths — resolve
+  # identically on host and guest. A provision step also symlinks the guest's
+  # ~/Developer -> here for convenience.
   - location: "~/Developer"
-    mountPoint: "/mnt/Developer"
+    mountPoint: "/Users/eric/Developer"
     writable: true
   # Host claude/agent skills, shared read-only so the guest's claude inherits
   # them (live — host edits show up immediately). The real skill dirs live in
@@ -65,10 +67,11 @@ provision:
       if ! command -v docker >/dev/null 2>&1; then
         curl -fsSL https://get.docker.com | sh
       fi
-      # NOTE: this group add only applies to NEW login sessions. Lima's SSH
-      # ControlMaster is already authenticated from boot, so `limactl shell`
-      # sessions won't pick up the docker group until the VM is restarted
-      # once after a fresh build:  limactl restart cochineal
+      # NOTE: this group add only applies to NEW login sessions, and Lima's SSH
+      # ControlMaster is authenticated from boot (before this provisioning runs),
+      # so the FIRST `limactl shell` after a fresh build wouldn't otherwise see
+      # the docker group. The bash->zsh handoff installed below re-execs that
+      # session via `sg docker`, so it picks the group up with no restart.
       usermod -aG docker "{{.User}}"
 
       # --- MOTD: short sandbox cheat-sheet (Ubuntu update-motd.d) ---
@@ -86,6 +89,28 @@ provision:
       # any prior copy, then add one.
       sed -i '\#cat /etc/sandbox-motd#d' /etc/zsh/zlogin 2>/dev/null || true
       printf '%s\n' '[[ -o interactive && -t 1 ]] && cat /etc/sandbox-motd 2>/dev/null' >> /etc/zsh/zlogin
+
+      # --- bash -> zsh self-heal: avoid the "restart once after create" dance ---
+      # chsh (above) makes zsh the login shell, but it runs AFTER Lima's SSH
+      # ControlMaster connected, so the first `limactl shell` on a fresh build
+      # lands in bash with the old (no-docker) group set. Rather than require a
+      # `limactl restart`, hand that session off to a zsh login shell — joining
+      # the docker group via `sg` if it's missing — so the very first shell gets
+      # zsh + MOTD + nmstatus + docker. In steady state Lima launches zsh
+      # directly and this never fires (zsh doesn't read /etc/bash.bashrc).
+      cat > /etc/cochineal-shell-handoff.sh <<'HANDOFFEOF'
+      # Sourced from /etc/bash.bashrc (interactive bash only). See cochineal.yaml.
+      if [[ $- == *i* ]] && command -v zsh >/dev/null 2>&1; then
+        if ! id -nG 2>/dev/null | grep -qw docker && getent group docker >/dev/null 2>&1; then
+          exec sg docker -c 'exec zsh -l'
+        fi
+        exec zsh -l
+      fi
+      HANDOFFEOF
+      # Source it from /etc/bash.bashrc (read by all interactive bash on Ubuntu,
+      # login or not). Idempotent: drop any prior line, then add one.
+      sed -i '\#cochineal-shell-handoff#d' /etc/bash.bashrc 2>/dev/null || true
+      printf '%s\n' '[ -r /etc/cochineal-shell-handoff.sh ] && . /etc/cochineal-shell-handoff.sh' >> /etc/bash.bashrc
 
   # 2. Per-user setup (runs as the Lima user, with $HOME set).
   - mode: user
@@ -108,8 +133,10 @@ provision:
         sh -c "$(curl -fsSL https://raw.githubusercontent.com/limulus/dotfiles/main/.config/dotfiles/bootstrap.sh)"
       fi
 
-      # --- ~/Developer -> the mounted host directory ---
-      ln -sfn /mnt/Developer "$HOME/Developer"
+      # --- ~/Developer -> the mounted host directory (which already lives at the
+      #     host's absolute path /Users/eric/Developer); this is just a convenience
+      #     shortcut from the guest user's home. ---
+      ln -sfn /Users/eric/Developer "$HOME/Developer"
 
       # --- claude CLI (native installer -> ~/.local/bin) ---
       if [ ! -x "$HOME/.local/bin/claude" ]; then
@@ -147,10 +174,10 @@ provision:
       nmlocal() {                       # back $PWD's node_modules with VM-local disk
         emulate -L zsh
         local proj="${PWD:A}"
-        if [[ "$proj" != /mnt/Developer/* ]]; then
+        if [[ "$proj" != /Users/eric/Developer/* ]]; then
           print -ru2 -- "nmlocal: run inside a project under ~/Developer"; return 1
         fi
-        local store="$NMSTORE${proj#/mnt/Developer}"
+        local store="$NMSTORE${proj#/Users/eric/Developer}"
         mkdir -p "$store" "$proj/node_modules"
         if mountpoint -q "$proj/node_modules"; then
           print -- "nmlocal: already VM-local ($proj/node_modules)"; return 0
@@ -175,7 +202,7 @@ provision:
         [[ -r $NMREG && ! -e /run/user/$UID/.nmrebind ]] || return 0
         local proj store
         while IFS= read -r proj; do
-          store="$NMSTORE${proj#/mnt/Developer}"
+          store="$NMSTORE${proj#/Users/eric/Developer}"
           [[ -d $proj && -d $store ]] || continue
           mountpoint -q "$proj/node_modules" 2>/dev/null && continue
           mkdir -p "$proj/node_modules"

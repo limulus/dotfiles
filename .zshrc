@@ -68,13 +68,11 @@ if [[ "$OSTYPE" == linux-gnu* ]]; then
 fi
 
 if [[ "$OSTYPE" == darwin* ]]; then
-  # Shell into the cochineal sandbox VM (config in ~/.config/lima/cochineal.yaml).
-  # Inside ~/Developer, land in the matching guest dir: the mount is at
-  # /mnt/Developer, so Lima's default cwd-mirroring would cd to a non-existent
-  # host path and print errors. Elsewhere, fall back to the guest home.
+  # Shell into the cochineal sandbox VM. Mirror the cwd only under ~/Developer,
+  # the one path shared with the guest; elsewhere it doesn't exist there.
   cochineal() {
     if [[ "$PWD" == "$HOME/Developer" || "$PWD" == "$HOME/Developer/"* ]]; then
-      limactl shell --workdir "/mnt/Developer${PWD#$HOME/Developer}" cochineal "$@"
+      limactl shell --workdir "$PWD" cochineal "$@"
     else
       limactl shell cochineal "$@"
     fi
