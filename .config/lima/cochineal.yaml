@@ -160,11 +160,12 @@ provision:
       export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$PATH"
       ZENVEOF
 
-      # --- node_modules isolation: `nmlocal` / `nmstatus` ---
+      # --- node_modules isolation: `nmlocal` / `nmstatus` / `nmworktree` ---
       # node_modules holds platform-specific native binaries, so it must NOT be
       # shared with the macOS host over the virtiofs mount. `nmlocal` shadows a
       # project's node_modules with VM-local storage via a bind mount (source
-      # files stay shared); `nmstatus` reports bind state.
+      # files stay shared); `nmstatus` reports bind state; `nmworktree` isolates
+      # a fresh worktree/project and runs a full `npm install` in one step.
       #
       # These ship as EXECUTABLES in ~/.local/bin (on PATH for every shell), NOT
       # as zsh functions. A coding agent runs tools in a non-interactive *bash*
@@ -202,7 +203,34 @@ provision:
         else print -- "unbound  $proj"; fi
       done < "$NMREG"
       NMSTATUSEOF
-      chmod +x "$HOME/.local/bin/nmlocal" "$HOME/.local/bin/nmstatus"
+      cat > "$HOME/.local/bin/nmworktree" <<'NMWORKTREEEOF'
+      #!/usr/bin/env zsh
+      # Set up a fresh git worktree (or any uninstalled project): bind its
+      # node_modules to VM-local disk, then do a FULL install. Installed by
+      # cochineal.yaml. Usage: nmworktree [project-or-worktree-path]   (default: $PWD)
+      #
+      # Why a full `npm install` and not a CoW clone of the main checkout's
+      # node_modules: the nmstore lives on ext4 (/dev/vda1), which has no reflink
+      # support, so `cp --reflink` fails with "Operation not supported". A warm
+      # `npm install` (~10s off the ~/.npm cache) is the pragmatic floor here. If the
+      # store is ever moved to a reflink-capable fs (XFS-reflink/btrfs), seed via
+      # `cp -a --reflink=always "$srcstore" "$dststore"` before the install instead.
+      emulate -L zsh
+      proj="${1:-$PWD}"
+      proj="${proj:A}"
+      if [[ "$proj" != /Users/eric/Developer/* ]]; then
+        print -ru2 -- "nmworktree: path must be under ~/Developer ($proj)"; exit 1
+      fi
+      if [[ ! -f "$proj/package.json" ]]; then
+        print -ru2 -- "nmworktree: no package.json at $proj — point me at the project/worktree root"; exit 1
+      fi
+      cd "$proj" || exit 1
+      nmlocal || exit 1
+      print -- "nmworktree: running full 'npm install' in $proj …"
+      npm install || { print -ru2 -- "nmworktree: npm install failed"; exit 1 }
+      print -- "nmworktree: $proj is VM-local and installed"
+      NMWORKTREEEOF
+      chmod +x "$HOME/.local/bin/nmlocal" "$HOME/.local/bin/nmstatus" "$HOME/.local/bin/nmworktree"
 
       # Per-boot rebind: the VM-local stores persist across reboots but the bind
       # mounts don't, so re-apply them on the first interactive login after a
@@ -239,22 +267,20 @@ provision:
       # Sandbox: the "cochineal" Lima VM
 
       You're in **cochineal**, a disposable Lima VM on a macOS host. The VM is
-      throwaway, but **your edits under `~/Developer` are not**: it's shared
-      writable with the host at the same path (`/Users/eric/Developer`), so
-      changes land on the real machine live, in both directions.
+      throwaway, but **edits under `~/Developer` are not** — it's shared live
+      with the host at the same path (`/Users/eric/Developer`).
 
-      - **Keep a project's `node_modules` off the shared mount** — it holds native
-        binaries built for the Linux VM that clash with the host's macOS install
-        (and vice versa). Isolate one with **`nmlocal`**: it bind-mounts VM-local
-        disk over the project's `node_modules`, so installs stay VM-local while
-        source stays shared (the host's copy is untouched). Run it before
-        `npm install` in any project that isn't already isolated; **`nmstatus`**
-        shows which are. Registered projects are re-bound automatically each boot,
-        so ones you actively work in are usually set up already.
-      - **Guest-local changes (outside `~/Developer`) don't survive a rebuild**,
-        and the VM's setup lives in `~/.config/lima/cochineal.yaml` on the host,
-        which isn't mounted here. To persist a sandbox change, raise it with the
-        user.
+      - **`node_modules` must not live on the shared mount** (native binaries
+        clash between the Linux VM and the macOS host). So **after creating a git
+        worktree, always run `nmworktree`** before any `npm install`, test, or
+        build — it isolates node_modules onto VM-local disk and installs;
+        skipping it pollutes the shared mount with Linux binaries. (`nmworktree`
+        = `nmlocal` + `npm install`; use **`nmlocal`** alone to isolate an
+        already-installed project, **`nmstatus`** to see what's isolated.
+        Registered projects re-bind each boot, so active ones are usually ready.)
+      - **Changes outside `~/Developer` don't survive a rebuild**; the VM's setup
+        lives in `~/.config/lima/cochineal.yaml` on the host (not mounted here),
+        so raise persistent changes with the user.
       COCHINEALEOF
 
       # Wire the import into the guest's CLAUDE.md (idempotent; guest-only).
