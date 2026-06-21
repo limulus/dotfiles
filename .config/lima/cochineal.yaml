@@ -160,44 +160,59 @@ provision:
       export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$PATH"
       ZENVEOF
 
-      # --- node_modules isolation helper (sourced by .zshrc's conf.d loader) ---
+      # --- node_modules isolation: `nmlocal` / `nmstatus` ---
       # node_modules holds platform-specific native binaries, so it must NOT be
       # shared with the macOS host over the virtiofs mount. `nmlocal` shadows a
-      # project's node_modules with VM-local storage via a bind mount; source
-      # files stay shared. See `nmlocal`/`nmstatus` once inside the VM.
+      # project's node_modules with VM-local storage via a bind mount (source
+      # files stay shared); `nmstatus` reports bind state.
+      #
+      # These ship as EXECUTABLES in ~/.local/bin (on PATH for every shell), NOT
+      # as zsh functions. A coding agent runs tools in a non-interactive *bash*
+      # shell that never loads the zsh profile, so functions would be invisible
+      # to it — it would see the commands "missing" and hand-roll the bind logic.
+      # Executables are reachable from any shell.
+      mkdir -p "$HOME/.local/bin"
+      cat > "$HOME/.local/bin/nmlocal" <<'NMLOCALEOF'
+      #!/usr/bin/env zsh
+      # Back $PWD's node_modules with VM-local disk. Installed by cochineal.yaml.
+      emulate -L zsh
+      NMSTORE="$HOME/.local/share/nmstore"; NMREG="$NMSTORE/.registry"
+      proj="${PWD:A}"
+      if [[ "$proj" != /Users/eric/Developer/* ]]; then
+        print -ru2 -- "nmlocal: run inside a project under ~/Developer"; exit 1
+      fi
+      store="$NMSTORE${proj#/Users/eric/Developer}"
+      mkdir -p "$store" "$proj/node_modules"
+      if mountpoint -q "$proj/node_modules"; then
+        print -- "nmlocal: already VM-local ($proj/node_modules)"; exit 0
+      fi
+      sudo mount --bind "$store" "$proj/node_modules" || exit 1
+      grep -qxF -- "$proj" "$NMREG" 2>/dev/null || print -r -- "$proj" >> "$NMREG"
+      print -- "nmlocal: $proj/node_modules is now VM-local -> $store"
+      print -- "         run 'npm install' to populate it (host copy is untouched)"
+      NMLOCALEOF
+      cat > "$HOME/.local/bin/nmstatus" <<'NMSTATUSEOF'
+      #!/usr/bin/env zsh
+      # List projects with VM-local node_modules and their current bind state.
+      emulate -L zsh
+      NMREG="$HOME/.local/share/nmstore/.registry"
+      [[ -r $NMREG ]] || { print -- "no VM-local node_modules registered"; exit 0 }
+      while IFS= read -r proj; do
+        if mountpoint -q "$proj/node_modules" 2>/dev/null; then print -- "bound    $proj"
+        else print -- "unbound  $proj"; fi
+      done < "$NMREG"
+      NMSTATUSEOF
+      chmod +x "$HOME/.local/bin/nmlocal" "$HOME/.local/bin/nmstatus"
+
+      # Per-boot rebind: the VM-local stores persist across reboots but the bind
+      # mounts don't, so re-apply them on the first interactive login after a
+      # boot. This stays a zsh login hook (a side effect, not a user command).
       mkdir -p "$HOME/.config/zsh"
       cat > "$HOME/.config/zsh/lima-nodemodules.zsh" <<'NMEOF'
-      # VM-local node_modules (keep platform-specific installs off the shared mount)
-      NMSTORE="$HOME/.local/share/nmstore"
-      NMREG="$NMSTORE/.registry"
-
-      nmlocal() {                       # back $PWD's node_modules with VM-local disk
-        emulate -L zsh
-        local proj="${PWD:A}"
-        if [[ "$proj" != /Users/eric/Developer/* ]]; then
-          print -ru2 -- "nmlocal: run inside a project under ~/Developer"; return 1
-        fi
-        local store="$NMSTORE${proj#/Users/eric/Developer}"
-        mkdir -p "$store" "$proj/node_modules"
-        if mountpoint -q "$proj/node_modules"; then
-          print -- "nmlocal: already VM-local ($proj/node_modules)"; return 0
-        fi
-        sudo mount --bind "$store" "$proj/node_modules" || return 1
-        grep -qxF -- "$proj" "$NMREG" 2>/dev/null || print -r -- "$proj" >> "$NMREG"
-        print -- "nmlocal: $proj/node_modules is now VM-local -> $store"
-        print -- "         run 'npm install' to populate it (host copy is untouched)"
-      }
-
-      nmstatus() {                      # list registered projects and bind state
-        [[ -r $NMREG ]] || { print -- "no VM-local node_modules registered"; return 0 }
-        local proj
-        while IFS= read -r proj; do
-          if mountpoint -q "$proj/node_modules" 2>/dev/null; then print -- "bound    $proj"
-          else print -- "unbound  $proj"; fi
-        done < "$NMREG"
-      }
-
-      _nmrebind() {                     # re-apply binds once per boot (stores persist; mounts don't)
+      # VM-local node_modules: re-apply binds once per boot. The nmlocal/nmstatus
+      # commands live in ~/.local/bin (on PATH for every shell).
+      NMSTORE="$HOME/.local/share/nmstore"; NMREG="$NMSTORE/.registry"
+      _nmrebind() {
         emulate -L zsh
         [[ -r $NMREG && ! -e /run/user/$UID/.nmrebind ]] || return 0
         local proj store
