@@ -71,6 +71,14 @@ if [[ "$OSTYPE" == darwin* ]]; then
   # Shell into the cochineal sandbox VM. Mirror the cwd only under ~/Developer,
   # the one path shared with the guest; elsewhere it doesn't exist there.
   cochineal() {
+    # Ensure Ghostty's terminfo exists in the guest so TERM=xterm-ghostty
+    # (forwarded by limactl shell) doesn't garble line editing — e.g. Delete
+    # inserting a space. The host always has the matching entry; install it
+    # once per VM if missing. Survives rebuilds; a fast no-op once present.
+    if [[ "$TERM" == xterm-ghostty ]] \
+       && ! limactl shell cochineal -- infocmp -x xterm-ghostty &>/dev/null; then
+      infocmp -x xterm-ghostty | limactl shell cochineal -- tic -x - &>/dev/null
+    fi
     if [[ "$PWD" == "$HOME/Developer" || "$PWD" == "$HOME/Developer/"* ]]; then
       limactl shell --workdir "$PWD" cochineal "$@"
     else
