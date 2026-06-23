@@ -79,9 +79,9 @@ provision:
 
       Agent sandbox — ~/Developer is mounted from the macOS host
 
+        nmworktree  set up a fresh worktree/project: VM-local node_modules + install
         nmlocal     give THIS project a VM-local node_modules, then: npm install
         nmstatus    list projects with VM-local node_modules
-        docker      Docker Engine + Compose available (rootful)
 
       MOTDEOF
       # Show the cheat-sheet via zlogin (fires on both multiplexed and fresh
@@ -165,13 +165,58 @@ provision:
       # shared with the macOS host over the virtiofs mount. `nmlocal` shadows a
       # project's node_modules with VM-local storage via a bind mount (source
       # files stay shared); `nmstatus` reports bind state; `nmworktree` isolates
-      # a fresh worktree/project and runs a full `npm install` in one step.
+      # a fresh worktree/project and installs into it (copy-on-write clone of the
+      # main checkout's node_modules when possible, else a full `npm install`).
       #
       # These ship as EXECUTABLES in ~/.local/bin (on PATH for every shell), NOT
       # as zsh functions. A coding agent runs tools in a non-interactive *bash*
       # shell that never loads the zsh profile, so functions would be invisible
       # to it — it would see the commands "missing" and hand-roll the bind logic.
       # Executables are reachable from any shell.
+
+      # The VM-local store lives on its own xfs filesystem (a sparse loop image)
+      # so it supports reflink/CoW — the guest root is ext4, which can't clone
+      # extents. nmworktree exploits this to seed a worktree's node_modules from
+      # its main checkout near-instantly (shared extents, ~0 extra disk). The 24G
+      # cap is sparse: only blocks actually written cost disk; grow later with
+      # `truncate -s <N>G "$NMSTORE_IMG"` + `sudo xfs_growfs <mountpoint>`.
+      NMSTORE_IMG="$HOME/.local/share/nmstore.img"
+      NMSTORE_MP="$HOME/.local/share/nmstore"
+      mkdir -p "$HOME/.local/share"
+      if [ ! -f "$NMSTORE_IMG" ]; then
+        truncate -s 24G "$NMSTORE_IMG"
+        mkfs.xfs -q "$NMSTORE_IMG"
+        # Migrate any pre-existing (ext4) store into the image so isolation
+        # survives the switch. Non-destructive: the old dir is kept as .pre-xfs.
+        if [ -d "$NMSTORE_MP" ] && [ -n "$(ls -A "$NMSTORE_MP" 2>/dev/null)" ] && ! mountpoint -q "$NMSTORE_MP"; then
+          _t="$(mktemp -d)"
+          sudo mount "$NMSTORE_IMG" "$_t"
+          sudo cp -a "$NMSTORE_MP/." "$_t/"
+          sudo umount "$_t"; rmdir "$_t"
+          mv "$NMSTORE_MP" "$NMSTORE_MP.pre-xfs"
+        fi
+      fi
+      mkdir -p "$NMSTORE_MP"
+      # Persist the mount (loop; nofail so a missing image never blocks boot).
+      # It must be mounted before _nmrebind re-applies project binds at login.
+      if ! grep -qsF " $NMSTORE_MP xfs " /etc/fstab; then
+        printf '%s %s xfs loop,nofail,x-systemd.device-timeout=10 0 0\n' \
+          "$NMSTORE_IMG" "$NMSTORE_MP" | sudo tee -a /etc/fstab >/dev/null
+      fi
+      if ! mountpoint -q "$NMSTORE_MP"; then
+        sudo mount -o loop "$NMSTORE_IMG" "$NMSTORE_MP" && sudo chown "$(id -u):$(id -g)" "$NMSTORE_MP"
+      fi
+      # Direct I/O on the loop device so reads aren't page-cached twice (once as
+      # xfs pages, once as ext4 backing-file pages) — frees the hot node_modules
+      # working set back to general use. Set it now for this session; a udev rule
+      # (scoped to this image by backing_file) re-applies it on every boot when
+      # fstab brings the loop device up. This kernel exposes no loop/direct_io
+      # sysfs attr, so the rule RUNs losetup rather than assigning ATTR=.
+      sudo losetup --direct-io=on "$(findmnt -no SOURCE "$NMSTORE_MP")" 2>/dev/null || true
+      printf '%s\n' 'ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="loop*", ATTR{loop/backing_file}=="'"$NMSTORE_IMG"'", RUN+="/usr/sbin/losetup --direct-io=on /dev/%k"' \
+        | sudo tee /etc/udev/rules.d/99-nmstore-directio.rules >/dev/null
+      sudo udevadm control --reload-rules
+
       mkdir -p "$HOME/.local/bin"
       cat > "$HOME/.local/bin/nmlocal" <<'NMLOCALEOF'
       #!/usr/bin/env zsh
@@ -205,19 +250,31 @@ provision:
       NMSTATUSEOF
       cat > "$HOME/.local/bin/nmworktree" <<'NMWORKTREEEOF'
       #!/usr/bin/env zsh
-      # Set up a fresh git worktree (or any uninstalled project): bind its
-      # node_modules to VM-local disk, then do a FULL install. Installed by
-      # cochineal.yaml. Usage: nmworktree [project-or-worktree-path]   (default: $PWD)
+      # Isolate a git worktree (or any uninstalled project) onto VM-local disk
+      # and populate its node_modules. Installed by cochineal.yaml.
+      # Usage: nmworktree [project-or-worktree-path]   (default: $PWD)
       #
-      # Why a full `npm install` and not a CoW clone of the main checkout's
-      # node_modules: the nmstore lives on ext4 (/dev/vda1), which has no reflink
-      # support, so `cp --reflink` fails with "Operation not supported". A warm
-      # `npm install` (~10s off the ~/.npm cache) is the pragmatic floor here. If the
-      # store is ever moved to a reflink-capable fs (XFS-reflink/btrfs), seed via
-      # `cp -a --reflink=always "$srcstore" "$dststore"` before the install instead.
+      # Fast path: when the nmstore is on a reflink-capable fs (xfs) and the
+      # worktree's MAIN checkout already has a populated store, seed node_modules
+      # with a copy-on-write clone of it — near-instant, ~0 extra disk (extents
+      # stay shared until npm rewrites a file). If the worktree's lockfile matches
+      # the main checkout's, the clone is exact and install is skipped entirely;
+      # otherwise `npm install` reconciles the difference (still fast — most of
+      # node_modules is already there). Falls back to a full `npm install` when
+      # there's no source store or the fs lacks reflink (e.g. an ext4 store), so
+      # it stays correct everywhere.
       emulate -L zsh
-      proj="${1:-$PWD}"
-      proj="${proj:A}"
+      NMSTORE="$HOME/.local/share/nmstore"
+
+      _nm_reflink_ok() {   # $1: a dir on the target fs — true if reflink works
+        local d=$1 a=$1/.nmreflink.$$
+        : > $a 2>/dev/null || return 1
+        cp --reflink=always $a $a.c 2>/dev/null; local rc=$?
+        rm -f $a $a.c 2>/dev/null
+        return $rc
+      }
+
+      proj="${1:-$PWD}"; proj="${proj:A}"
       if [[ "$proj" != /Users/eric/Developer/* ]]; then
         print -ru2 -- "nmworktree: path must be under ~/Developer ($proj)"; exit 1
       fi
@@ -226,9 +283,42 @@ provision:
       fi
       cd "$proj" || exit 1
       nmlocal || exit 1
-      print -- "nmworktree: running full 'npm install' in $proj …"
+      nm="$proj/node_modules"
+
+      # Identify the worktree's main checkout and its store, then CoW-seed from it.
+      seeded=0; main=""
+      gcd=$(git -C "$proj" rev-parse --git-common-dir 2>/dev/null)
+      if [[ -n "$gcd" ]]; then
+        [[ "$gcd" = /* ]] || gcd="$proj/$gcd"
+        main="${gcd:h:A}"
+        srcstore="$NMSTORE${main#/Users/eric/Developer}"
+        if [[ "$main" == /Users/eric/Developer/* && "$main" != "$proj" \
+              && -n "$(ls -A "$srcstore" 2>/dev/null)" ]] && _nm_reflink_ok "$nm"; then
+          print -- "nmworktree: CoW-seeding node_modules from $main …"
+          if cp -a --reflink=always "$srcstore/." "$nm/" 2>/dev/null; then
+            seeded=1
+          else
+            print -ru2 -- "nmworktree: CoW seed failed; falling back to a full install"
+            find "$nm" -mindepth 1 -delete 2>/dev/null
+          fi
+        fi
+      fi
+
+      # An identical lockfile means the clone is already exact — skip install.
+      if [[ $seeded == 1 && -f "$proj/package-lock.json" && -f "$main/package-lock.json" ]] \
+         && cmp -s "$proj/package-lock.json" "$main/package-lock.json"; then
+        print -- "nmworktree: lockfile matches $main — clone is exact, skipping npm install"
+        print -- "nmworktree: $proj is VM-local and installed (CoW)"
+        exit 0
+      fi
+
+      print -- "nmworktree: running 'npm install' in $proj …"
       npm install || { print -ru2 -- "nmworktree: npm install failed"; exit 1 }
-      print -- "nmworktree: $proj is VM-local and installed"
+      if [[ $seeded == 1 ]]; then
+        print -- "nmworktree: $proj is VM-local and installed (CoW-seeded, reconciled)"
+      else
+        print -- "nmworktree: $proj is VM-local and installed"
+      fi
       NMWORKTREEEOF
       chmod +x "$HOME/.local/bin/nmlocal" "$HOME/.local/bin/nmstatus" "$HOME/.local/bin/nmworktree"
 
@@ -273,11 +363,11 @@ provision:
       - **`node_modules` must not live on the shared mount** (native binaries
         clash between the Linux VM and the macOS host). So **after creating a git
         worktree, always run `nmworktree`** before any `npm install`, test, or
-        build — it isolates node_modules onto VM-local disk and installs;
-        skipping it pollutes the shared mount with Linux binaries. (`nmworktree`
-        = `nmlocal` + `npm install`; use **`nmlocal`** alone to isolate an
-        already-installed project, **`nmstatus`** to see what's isolated.
-        Registered projects re-bind each boot, so active ones are usually ready.)
+        build — it isolates node_modules onto VM-local disk and populates it;
+        skipping it pollutes the shared mount with Linux binaries. (Use
+        **`nmlocal`** alone to isolate an already-installed project, **`nmstatus`**
+        to see what's isolated. Registered projects re-bind each boot, so active
+        ones are usually ready.)
       - **Changes outside `~/Developer` don't survive a rebuild**; the VM's setup
         lives in `~/.config/lima/cochineal.yaml` on the host (not mounted here),
         so raise persistent changes with the user.
