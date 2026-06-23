@@ -68,27 +68,33 @@ if [[ "$OSTYPE" == linux-gnu* ]]; then
 fi
 
 if [[ "$OSTYPE" == darwin* ]]; then
-  # Shell into the cochineal sandbox VM. Mirror the cwd only under ~/Developer,
-  # the one path shared with the guest; elsewhere it doesn't exist there.
-  cochineal() {
+  # Shell into Lima sandbox VMs. Mirror the cwd only under ~/Developer, the
+  # one path shared with these guests; elsewhere it doesn't exist there.
+  _lima_shell() {
+    local instance="$1"
+    local shared_root="$HOME/Developer"
+    shift
+
     # Ensure Ghostty's terminfo exists in the guest so TERM=xterm-ghostty
     # (forwarded by limactl shell) doesn't garble line editing — e.g. Delete
     # inserting a space. The host always has the matching entry; install it
     # once per VM if missing. Survives rebuilds; a fast no-op once present.
     if [[ "$TERM" == xterm-ghostty ]] \
-       && ! limactl shell cochineal -- infocmp -x xterm-ghostty &>/dev/null; then
-      infocmp -x xterm-ghostty | limactl shell cochineal -- tic -x - &>/dev/null
+       && ! limactl shell "$instance" -- infocmp -x xterm-ghostty &>/dev/null; then
+      infocmp -x xterm-ghostty | limactl shell "$instance" -- tic -x - &>/dev/null
     fi
-    if [[ "$PWD" == "$HOME/Developer" || "$PWD" == "$HOME/Developer/"* ]]; then
-      limactl shell --workdir "$PWD" cochineal "$@"
+    if [[ "$PWD" == "$shared_root" || "$PWD" == "$shared_root/"* ]]; then
+      limactl shell --workdir "$PWD" "$instance" "$@"
     else
-      limactl shell cochineal "$@"
+      limactl shell "$instance" "$@"
     fi
   }
+
+  cochineal() { _lima_shell cochineal "$@"; }
+  thorn() { _lima_shell thorn "$@"; }
 fi
 
 # Machine-local zsh drop-ins (untracked; e.g. files provisioned into a VM).
 # Keeps environment-specific config out of these portable dotfiles.
 for _zf in "$HOME"/.config/zsh/*.zsh(N); do source "$_zf"; done
 unset _zf
-
