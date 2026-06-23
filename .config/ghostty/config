@@ -62,6 +62,14 @@ background-blur = true
 # Native tabs in the titlebar instead of the blended transparent default.
 macos-titlebar-style = tabs
 
+# ── Shell integration ──────────────────────────────────────────────────
+# Carry Ghostty's terminfo across the SSH boundary so remote shells don't
+# mishandle keys (e.g. Delete inserting a space). ssh-terminfo installs the
+# xterm-ghostty entry on the remote on first connect; ssh-env falls back to a
+# safe TERM if it can't. Note: fires for `ssh` run in the shell — not for
+# `limactl shell`, which execs ssh directly and bypasses the wrapper.
+shell-integration-features = ssh-env,ssh-terminfo
+
 # ── Quick terminal (Quake-style dropdown) ──────────────────────────────
 # Uncomment to toggle a drop-down terminal from anywhere:
 # keybind = global:cmd+grave_accent=toggle_quick_terminal
