@@ -1,0 +1,68 @@
+# Ghostty configuration
+# Docs: https://ghostty.org/docs/config
+# Reload a running instance with: cmd+shift+,
+
+# ── Font ───────────────────────────────────────────────────────────────
+# The installed family is the variable build, so the name carries " Var".
+font-family = Monaspace Neon Var
+# Menlo as a fallback; it's the one fallback that's actually installed.
+font-family = Menlo
+
+# Ligatures + Monaspace texture healing.
+font-feature = calt
+font-feature = dlig
+font-feature = ss01
+font-feature = ss02
+font-feature = ss03
+font-feature = ss04
+font-feature = ss05
+font-feature = ss06
+font-feature = ss07
+font-feature = ss08
+
+# 13 reads well in a full-window terminal; drop to 12 for tighter text.
+font-size = 13
+
+# ── Keyboard ───────────────────────────────────────────────────────────
+# Right Option sends Alt/Meta (alt+f, alt+b word motion, editor binds).
+# Left Option stays free for composing special characters (é, ñ, –, …).
+macos-option-as-alt = right
+
+# Option+Delete erases the previous word.
+# Sends Meta+Backspace (ESC + DEL) → zsh/bash bind this to backward-kill-word.
+# Fires on either Option key; doesn't disturb Option+letter composition.
+keybind = alt+backspace=text:\x1b\x7f
+
+# Option+←/→ jump by word. Same idea: send Meta+b / Meta+f
+# (zsh/bash → backward-word / forward-word) on either Option.
+keybind = alt+left=text:\x1bb
+keybind = alt+right=text:\x1bf
+
+# ── Theme ──────────────────────────────────────────────────────────────
+# Browse choices with: ghostty +list-themes
+# Auto-switches with the macOS light/dark appearance.
+theme = light:Rose Pine Dawn,dark:Rose Pine
+
+# ── Comfort ────────────────────────────────────────────────────────────
+# A little breathing room around the text grid (default is a tight 2px).
+window-padding-x = 8
+window-padding-y = 6
+# Keep padding even when the window size doesn't divide cleanly by cell.
+window-padding-balance = true
+# Loosen line spacing slightly — easier on the eyes for long sessions.
+adjust-cell-height = 8%
+# Blink the cursor so it's easy to find. Set false for a steady block.
+cursor-style-blink = true
+
+# ── Aesthetic ──────────────────────────────────────────────────────────
+# Subtle translucency + blurred backdrop (macOS). 0.95 stays fully legible;
+# lower toward 0.85 for more see-through. Set background-blur = false to drop it.
+background-opacity = 0.95
+background-blur = true
+# Native tabs in the titlebar instead of the blended transparent default.
+macos-titlebar-style = tabs
+
+# ── Quick terminal (Quake-style dropdown) ──────────────────────────────
+# Uncomment to toggle a drop-down terminal from anywhere:
+# keybind = global:cmd+grave_accent=toggle_quick_terminal
+# quick-terminal-position = top
