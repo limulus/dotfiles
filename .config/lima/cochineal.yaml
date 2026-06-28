@@ -81,6 +81,7 @@ provision:
 
         nmworktree  set up a fresh worktree/project: VM-local node_modules + install
         nmlocal     give THIS project a VM-local node_modules, then: npm install
+        nmunbind    release VM-local node_modules (run before `git worktree remove`)
         nmstatus    list projects with VM-local node_modules
 
       MOTDEOF
@@ -320,7 +321,62 @@ provision:
         print -- "nmworktree: $proj is VM-local and installed"
       fi
       NMWORKTREEEOF
-      chmod +x "$HOME/.local/bin/nmlocal" "$HOME/.local/bin/nmstatus" "$HOME/.local/bin/nmworktree"
+      cat > "$HOME/.local/bin/nmunbind" <<'NMUNBINDEOF'
+      #!/usr/bin/env zsh
+      # Release a project's VM-local node_modules: unmount the bind, deregister it,
+      # and free its store (the inverse of nmlocal). Run this BEFORE
+      # `git worktree remove` — git's rm -rf of the worktree hits the live
+      # node_modules mountpoint and fails with EBUSY otherwise. Installed by
+      # cochineal.yaml.
+      # Usage: nmunbind [project-path]   (default path: $PWD)
+      #
+      # Once the worktree is gone its store is orphaned (keyed to a path that no
+      # longer exists, dropped from the registry, never rebound), so freeing it is
+      # always correct here — no flag to decide. The ONE store worth keeping is the
+      # repo's MAIN checkout, since every worktree CoW-seeds node_modules from it;
+      # nmunbind detects that case and preserves it.
+      emulate -L zsh
+      NMSTORE="$HOME/.local/share/nmstore"; NMREG="$NMSTORE/.registry"
+      proj="${1:-$PWD}"; proj="${proj:A}"
+      nm="$proj/node_modules"
+      if mountpoint -q "$nm" 2>/dev/null; then
+        sudo umount "$nm" \
+          || { print -ru2 -- "nmunbind: umount failed for $nm (still in use? exit shells/processes under it, then retry)"; exit 1 }
+        print -- "nmunbind: unmounted $nm"
+      else
+        print -- "nmunbind: $nm is not a bind mount (nothing to unmount)"
+      fi
+      # Drop it from the rebind registry so it isn't re-bound on the next boot.
+      if [[ -r "$NMREG" ]]; then
+        tmp="$NMREG.tmp.$$"
+        grep -vxF -- "$proj" "$NMREG" > "$tmp" 2>/dev/null || :
+        mv "$tmp" "$NMREG"
+      fi
+      # Free the orphaned store — UNLESS we can positively confirm this is the
+      # repo's MAIN checkout, whose store is the CoW seed source for sibling
+      # worktrees. Default to freeing: a linked worktree, a non-git project, or a
+      # checkout already half-removed (git info gone) all have orphaned stores, so
+      # "can't tell" must mean free, not keep — else stores leak forever. A main
+      # checkout has --git-common-dir == its own --git-dir; a linked worktree's
+      # common-dir points back under the main checkout, so they differ.
+      store="$NMSTORE${proj#/Users/eric/Developer}"
+      is_main=0
+      gd=$(git -C "$proj" rev-parse --git-dir 2>/dev/null)
+      gcd=$(git -C "$proj" rev-parse --git-common-dir 2>/dev/null)
+      if [[ -n "$gd" && -n "$gcd" ]]; then
+        [[ "$gd" = /* ]] || gd="$proj/$gd"; [[ "$gcd" = /* ]] || gcd="$proj/$gcd"
+        [[ "${gd:A}" == "${gcd:A}" ]] && is_main=1   # main checkout, keep its store
+      fi
+      if [[ "$store" == "$NMSTORE"/* && -d "$store" ]]; then
+        if [[ $is_main == 1 ]]; then
+          print -- "nmunbind: kept store $store (main checkout — CoW seed for worktrees)"
+        else
+          rm -rf "$store" && print -- "nmunbind: freed orphaned store $store"
+        fi
+      fi
+      print -- "nmunbind: $proj released — safe to 'git worktree remove' now"
+      NMUNBINDEOF
+      chmod +x "$HOME/.local/bin/nmlocal" "$HOME/.local/bin/nmstatus" "$HOME/.local/bin/nmworktree" "$HOME/.local/bin/nmunbind"
 
       # Per-boot rebind: the VM-local stores persist across reboots but the bind
       # mounts don't, so re-apply them on the first interactive login after a
@@ -368,6 +424,13 @@ provision:
         **`nmlocal`** alone to isolate an already-installed project, **`nmstatus`**
         to see what's isolated. Registered projects re-bind each boot, so active
         ones are usually ready.)
+      - **Before removing a worktree, run `nmunbind` first**
+        (`nmunbind <worktree-path>`, then `git worktree remove <worktree-path>`).
+        `node_modules` is a bind mount, so `git worktree remove` would otherwise
+        fail with "Device or resource busy" while trying to delete it. `nmunbind`
+        unmounts it, deregisters it, and frees its (now-orphaned) VM-local store;
+        after that the removal succeeds. No flags to weigh — it preserves the main
+        checkout's store automatically.
       - **Changes outside `~/Developer` don't survive a rebuild**; the VM's setup
         lives in `~/.config/lima/cochineal.yaml` on the host (not mounted here),
         so raise persistent changes with the user.
