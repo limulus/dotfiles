@@ -16,5 +16,6 @@
   "theme": "auto",
   "autoCompactEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": true
+  "voiceEnabled": true,
+  "tui": "fullscreen"
 }
