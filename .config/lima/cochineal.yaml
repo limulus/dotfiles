@@ -119,15 +119,14 @@ provision:
       #!/bin/bash
       set -eux
 
-      # --- n (Node version manager) + Node LTS, into ~/.local/n per .zshrc ---
-      export N_PREFIX="$HOME/.local/n"
+      # --- n (Node version manager) + Node LTS, into ~/.local per .zshrc ---
+      export N_PREFIX="$HOME/.local"
       if [ ! -x "$N_PREFIX/bin/n" ]; then
         mkdir -p "$N_PREFIX/bin"
         curl -fsSL https://raw.githubusercontent.com/tj/n/master/bin/n -o "$N_PREFIX/bin/n"
         chmod +x "$N_PREFIX/bin/n"
       fi
-      PATH="$N_PREFIX/bin:$PATH" N_PREFIX="$N_PREFIX" "$N_PREFIX/bin/n" lts
-      export PATH="$N_PREFIX/bin:$PATH"
+      N_PREFIX="$N_PREFIX" "$N_PREFIX/bin/n" lts
 
       # --- Dotfiles (bare-repo bootstrap; idempotent: it skips if ~/.dotfiles exists) ---
       if [ ! -e "$HOME/.dotfiles" ]; then
@@ -158,7 +157,7 @@ provision:
       cat > "$HOME/.zshenv" <<'ZENVEOF'
       # User-local tools on PATH for ALL zsh invocations (incl. non-interactive),
       # so `limactl shell cochineal <cmd>` resolves claude/node/npm.
-      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$PATH"
+      export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
       ZENVEOF
 
       # --- node_modules isolation: `nmlocal` / `nmstatus` / `nmworktree` ---
@@ -448,7 +447,7 @@ probes:
     script: |
       #!/bin/bash
       set -eux
-      if ! timeout 300s bash -c "until test -x ~/.local/n/bin/node && test -x ~/.local/bin/claude && command -v docker >/dev/null 2>&1; do sleep 3; done"; then
+      if ! timeout 300s bash -c "until test -x ~/.local/bin/node && test -x ~/.local/bin/claude && command -v docker >/dev/null 2>&1; do sleep 3; done"; then
         echo "provisioning did not finish in time" >&2
         exit 1
       fi
