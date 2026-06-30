@@ -1,5 +1,5 @@
 # User executables
-export PATH=$HOME/bin:$HOME/.local/bin:$HOME/.local/n/bin:$HOME/.local/lima/bin:$PATH
+export PATH=$HOME/bin:$HOME/.local/bin:$HOME/.local/lima/bin:$PATH
 
 # Timezone (derived from system if not already set, so devcontainers can inherit it)
 if [[ -z $TZ && -L /etc/localtime ]]; then
@@ -32,7 +32,7 @@ setopt complete_aliases
 compdef _files dot
 
 # n Node Version Manager
-export N_PREFIX=$HOME/.local/n
+export N_PREFIX=$HOME/.local
 
 # AWS
 export PATH=$HOME/.local/aws/aws-cli:$PATH
